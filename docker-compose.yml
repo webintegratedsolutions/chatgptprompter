@@ -1,9 +1,7 @@
 version: '3.6'
-
 services:
   chatgpt:
-    build: .
+    container_name: 'chatgpt_prompter'
+    image: 'wisolution.azurecr.io/syedfahimabrar/test:main'
     ports:
-      - 3000:3000
-    environment:
-      - 'OPENAI_API_KEY='
+      - 80:3000
