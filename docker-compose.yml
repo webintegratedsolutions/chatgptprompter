@@ -2,6 +2,7 @@ version: '3.6'
 services:
   chatgpt:
     container_name: 'chatgpt_prompter'
-    image: 'wisolution.azurecr.io/syedfahimabrar/test:main'
+    build: .
+    image: 'wisolution.azurecr.io/webintegratedsolutions/chatgptprompter:main'
     ports:
       - 80:3000
