@@ -1,12 +1,20 @@
-import { Conversation, Message } from '@/types/chat';
+import { getUser } from '@/utils/app/auth/helpers';
+import { getDatabase } from '@/utils/app/extensions/database';
+
 import { ErrorMessage } from '@/types/error';
-import { FolderInterface } from '@/types/folder';
 import { OpenAIModel, OpenAIModelID } from '@/types/openai';
 import { PluginKey } from '@/types/plugin';
-import { Prompt } from '@/types/prompt';
+import { User } from '@chatbot-ui/core/types/auth';
+import { Conversation, Message } from '@chatbot-ui/core/types/chat';
+import { FolderInterface } from '@chatbot-ui/core/types/folder';
+import { Prompt } from '@chatbot-ui/core/types/prompt';
+import { SystemPrompt } from '@chatbot-ui/core/types/system-prompt';
+
+import { Database } from '@chatbot-ui/core';
 
 export interface HomeInitialState {
   apiKey: string;
+  database: Database;
   pluginKeys: PluginKey[];
   loading: boolean;
   lightMode: 'light' | 'dark';
@@ -27,10 +35,14 @@ export interface HomeInitialState {
   defaultModelId: OpenAIModelID | undefined;
   serverSideApiKeyIsSet: boolean;
   serverSidePluginKeysSet: boolean;
+  systemPrompts: SystemPrompt[];
+  defaultSystemPromptId: string;
+  user: User;
 }
 
 export const initialState: HomeInitialState = {
   apiKey: '',
+  database: await getDatabase(),
   loading: false,
   pluginKeys: [],
   lightMode: 'dark',
@@ -51,4 +63,7 @@ export const initialState: HomeInitialState = {
   defaultModelId: undefined,
   serverSideApiKeyIsSet: false,
   serverSidePluginKeysSet: false,
+  systemPrompts: [],
+  defaultSystemPromptId: '0',
+  user: await getUser(),
 };

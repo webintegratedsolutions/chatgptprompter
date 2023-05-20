@@ -8,20 +8,15 @@ import {
   useRef,
   useState,
 } from 'react';
-import toast from 'react-hot-toast';
 
 import { useTranslation } from 'next-i18next';
 
-import { getEndpoint } from '@/utils/app/api';
-import {
-  saveConversation,
-  saveConversations,
-  updateConversation,
-} from '@/utils/app/conversation';
+import { editMessageHandler } from '@/utils/app/handlers/EditMessage';
+import { regenerateMessageHandler } from '@/utils/app/handlers/RegenerateMessage';
+import { sendHandlerFunction } from '@/utils/app/handlers/SendMessage';
 import { throttle } from '@/utils/data/throttle';
 
-import { ChatBody, Conversation, Message } from '@/types/chat';
-import { Plugin } from '@/types/plugin';
+import { Message } from '@chatbot-ui/core/types/chat';
 
 import HomeContext from '@/pages/api/home/home.context';
 
@@ -29,10 +24,10 @@ import Spinner from '../Spinner';
 import { ChatInput } from './ChatInput';
 import { ChatLoader } from './ChatLoader';
 import { ErrorMessageDiv } from './ErrorMessageDiv';
-import { ModelSelect } from './ModelSelect';
-import { SystemPrompt } from './SystemPrompt';
-import { TemperatureSlider } from './Temperature';
 import { MemoizedChatMessage } from './MemoizedChatMessage';
+import { ModelSelect } from './ModelSelect';
+import { SystemPromptSection } from './SystemPromptSection';
+import { TemperatureSlider } from './Temperature';
 
 interface Props {
   stopConversationRef: MutableRefObject<boolean>;
@@ -46,13 +41,14 @@ export const Chat = memo(({ stopConversationRef }: Props) => {
       selectedConversation,
       conversations,
       models,
+      database,
       apiKey,
       pluginKeys,
       serverSideApiKeyIsSet,
-      messageIsStreaming,
       modelError,
       loading,
-      prompts,
+      systemPrompts,
+      user,
     },
     handleUpdateConversation,
     dispatch: homeDispatch,
@@ -68,191 +64,35 @@ export const Chat = memo(({ stopConversationRef }: Props) => {
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const handleSend = useCallback(
-    async (message: Message, deleteCount = 0, plugin: Plugin | null = null) => {
-      if (selectedConversation) {
-        let updatedConversation: Conversation;
-        if (deleteCount) {
-          const updatedMessages = [...selectedConversation.messages];
-          for (let i = 0; i < deleteCount; i++) {
-            updatedMessages.pop();
-          }
-          updatedConversation = {
-            ...selectedConversation,
-            messages: [...updatedMessages, message],
-          };
-        } else {
-          updatedConversation = {
-            ...selectedConversation,
-            messages: [...selectedConversation.messages, message],
-          };
-        }
-        homeDispatch({
-          field: 'selectedConversation',
-          value: updatedConversation,
-        });
-        homeDispatch({ field: 'loading', value: true });
-        homeDispatch({ field: 'messageIsStreaming', value: true });
-        const chatBody: ChatBody = {
-          model: updatedConversation.model,
-          messages: updatedConversation.messages,
-          key: apiKey,
-          prompt: updatedConversation.prompt,
-          temperature: updatedConversation.temperature,
-        };
-        const endpoint = getEndpoint(plugin);
-        let body;
-        if (!plugin) {
-          body = JSON.stringify(chatBody);
-        } else {
-          body = JSON.stringify({
-            ...chatBody,
-            googleAPIKey: pluginKeys
-              .find((key) => key.pluginId === 'google-search')
-              ?.requiredKeys.find((key) => key.key === 'GOOGLE_API_KEY')?.value,
-            googleCSEId: pluginKeys
-              .find((key) => key.pluginId === 'google-search')
-              ?.requiredKeys.find((key) => key.key === 'GOOGLE_CSE_ID')?.value,
-          });
-        }
-        const controller = new AbortController();
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          signal: controller.signal,
-          body,
-        });
-        if (!response.ok) {
-          homeDispatch({ field: 'loading', value: false });
-          homeDispatch({ field: 'messageIsStreaming', value: false });
-          toast.error(response.statusText);
-          return;
-        }
-        const data = response.body;
-        if (!data) {
-          homeDispatch({ field: 'loading', value: false });
-          homeDispatch({ field: 'messageIsStreaming', value: false });
-          return;
-        }
-        if (!plugin) {
-          if (updatedConversation.messages.length === 1) {
-            const { content } = message;
-            const customName =
-              content.length > 30 ? content.substring(0, 30) + '...' : content;
-            updatedConversation = {
-              ...updatedConversation,
-              name: customName,
-            };
-          }
-          homeDispatch({ field: 'loading', value: false });
-          const reader = data.getReader();
-          const decoder = new TextDecoder();
-          let done = false;
-          let isFirst = true;
-          let text = '';
-          while (!done) {
-            if (stopConversationRef.current === true) {
-              controller.abort();
-              done = true;
-              break;
-            }
-            const { value, done: doneReading } = await reader.read();
-            done = doneReading;
-            const chunkValue = decoder.decode(value);
-            text += chunkValue;
-            if (isFirst) {
-              isFirst = false;
-              const updatedMessages: Message[] = [
-                ...updatedConversation.messages,
-                { role: 'assistant', content: chunkValue },
-              ];
-              updatedConversation = {
-                ...updatedConversation,
-                messages: updatedMessages,
-              };
-              homeDispatch({
-                field: 'selectedConversation',
-                value: updatedConversation,
-              });
-            } else {
-              const updatedMessages: Message[] =
-                updatedConversation.messages.map((message, index) => {
-                  if (index === updatedConversation.messages.length - 1) {
-                    return {
-                      ...message,
-                      content: text,
-                    };
-                  }
-                  return message;
-                });
-              updatedConversation = {
-                ...updatedConversation,
-                messages: updatedMessages,
-              };
-              homeDispatch({
-                field: 'selectedConversation',
-                value: updatedConversation,
-              });
-            }
-          }
-          saveConversation(updatedConversation);
-          const updatedConversations: Conversation[] = conversations.map(
-            (conversation) => {
-              if (conversation.id === selectedConversation.id) {
-                return updatedConversation;
-              }
-              return conversation;
-            },
-          );
-          if (updatedConversations.length === 0) {
-            updatedConversations.push(updatedConversation);
-          }
-          homeDispatch({ field: 'conversations', value: updatedConversations });
-          saveConversations(updatedConversations);
-          homeDispatch({ field: 'messageIsStreaming', value: false });
-        } else {
-          const { answer } = await response.json();
-          const updatedMessages: Message[] = [
-            ...updatedConversation.messages,
-            { role: 'assistant', content: answer },
-          ];
-          updatedConversation = {
-            ...updatedConversation,
-            messages: updatedMessages,
-          };
-          homeDispatch({
-            field: 'selectedConversation',
-            value: updateConversation,
-          });
-          saveConversation(updatedConversation);
-          const updatedConversations: Conversation[] = conversations.map(
-            (conversation) => {
-              if (conversation.id === selectedConversation.id) {
-                return updatedConversation;
-              }
-              return conversation;
-            },
-          );
-          if (updatedConversations.length === 0) {
-            updatedConversations.push(updatedConversation);
-          }
-          homeDispatch({ field: 'conversations', value: updatedConversations });
-          saveConversations(updatedConversations);
-          homeDispatch({ field: 'loading', value: false });
-          homeDispatch({ field: 'messageIsStreaming', value: false });
-        }
-      }
-    },
-    [
-      apiKey,
-      conversations,
-      pluginKeys,
-      selectedConversation,
-      stopConversationRef,
-    ],
-  );
+  const handleSend = useCallback(sendHandlerFunction, [
+    apiKey,
+    conversations,
+    homeDispatch,
+    pluginKeys,
+    selectedConversation,
+    stopConversationRef,
+    database,
+  ]);
+
+  const handleEdit = useCallback(editMessageHandler, [
+    apiKey,
+    conversations,
+    homeDispatch,
+    pluginKeys,
+    selectedConversation,
+    stopConversationRef,
+    database,
+  ]);
+
+  const handleRegenerate = useCallback(regenerateMessageHandler, [
+    apiKey,
+    conversations,
+    homeDispatch,
+    pluginKeys,
+    selectedConversation,
+    stopConversationRef,
+    database,
+  ]);
 
   const scrollToBottom = useCallback(() => {
     if (autoScrollEnabled) {
@@ -306,14 +146,6 @@ export const Chat = memo(({ stopConversationRef }: Props) => {
     }
   };
   const throttledScrollDown = throttle(scrollDown, 250);
-
-  // useEffect(() => {
-  //   console.log('currentMessage', currentMessage);
-  //   if (currentMessage) {
-  //     handleSend(currentMessage);
-  //     homeDispatch({ field: 'currentMessage', value: undefined });
-  //   }
-  // }, [currentMessage]);
 
   useEffect(() => {
     throttledScrollDown();
@@ -413,16 +245,7 @@ export const Chat = memo(({ stopConversationRef }: Props) => {
                     <div className="flex h-full flex-col space-y-4 rounded-lg border border-neutral-200 p-4 dark:border-neutral-600">
                       <ModelSelect />
 
-                      <SystemPrompt
-                        conversation={selectedConversation}
-                        prompts={prompts}
-                        onChangePrompt={(prompt) =>
-                          handleUpdateConversation(selectedConversation, {
-                            key: 'prompt',
-                            value: prompt,
-                          })
-                        }
-                      />
+                      <SystemPromptSection systemPrompts={systemPrompts} />
 
                       <TemperatureSlider
                         label={t('Temperature')}
@@ -468,12 +291,21 @@ export const Chat = memo(({ stopConversationRef }: Props) => {
                     key={index}
                     message={message}
                     messageIndex={index}
-                    onEdit={(editedMessage) => {
+                    onEdit={(conversation, editedMessage) => {
                       setCurrentMessage(editedMessage);
                       // discard edited message and the ones that come after then resend
-                      handleSend(
+                      handleEdit(
+                        user,
                         editedMessage,
-                        selectedConversation?.messages.length - index,
+                        index,
+                        null,
+                        stopConversationRef,
+                        conversation,
+                        conversations,
+                        database,
+                        apiKey,
+                        pluginKeys,
+                        homeDispatch,
                       );
                     }}
                   />
@@ -492,14 +324,35 @@ export const Chat = memo(({ stopConversationRef }: Props) => {
           <ChatInput
             stopConversationRef={stopConversationRef}
             textareaRef={textareaRef}
-            onSend={(message, plugin) => {
+            onSend={(conversation, message, plugin) => {
               setCurrentMessage(message);
-              handleSend(message, 0, plugin);
+              handleSend(
+                user,
+                message,
+                plugin,
+                stopConversationRef,
+                conversation,
+                conversations,
+                database,
+                apiKey,
+                pluginKeys,
+                homeDispatch,
+              );
             }}
             onScrollDownClick={handleScrollDown}
-            onRegenerate={() => {
+            onRegenerate={(conversation) => {
               if (currentMessage) {
-                handleSend(currentMessage, 2, null);
+                handleRegenerate(
+                  user,
+                  null,
+                  stopConversationRef,
+                  conversation,
+                  conversations,
+                  database,
+                  apiKey,
+                  pluginKeys,
+                  homeDispatch,
+                );
               }
             }}
             showScrollDownButton={showScrollDownButton}

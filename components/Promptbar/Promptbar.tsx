@@ -3,15 +3,19 @@ import { useTranslation } from 'react-i18next';
 
 import { useCreateReducer } from '@/hooks/useCreateReducer';
 
-import { savePrompts } from '@/utils/app/prompts';
+import { localSaveShowPromptBar } from '@/utils/app/storage/local/uiState';
+import {
+  storageCreatePrompt,
+  storageDeletePrompt,
+  storageUpdatePrompt,
+} from '@/utils/app/storage/prompt';
 
 import { OpenAIModels } from '@/types/openai';
-import { Prompt } from '@/types/prompt';
+import { Prompt } from '@chatbot-ui/core/types/prompt';
 
 import HomeContext from '@/pages/api/home/home.context';
 
 import { PromptFolders } from './components/PromptFolders';
-import { PromptbarSettings } from './components/PromptbarSettings';
 import { Prompts } from './components/Prompts';
 
 import Sidebar from '../Sidebar';
@@ -28,7 +32,7 @@ const Promptbar = () => {
   });
 
   const {
-    state: { prompts, defaultModelId, showPromptbar },
+    state: { prompts, defaultModelId, database, showPromptbar, user },
     dispatch: homeDispatch,
     handleCreateFolder,
   } = useContext(HomeContext);
@@ -40,7 +44,7 @@ const Promptbar = () => {
 
   const handleTogglePromptbar = () => {
     homeDispatch({ field: 'showPromptbar', value: !showPromptbar });
-    localStorage.setItem('showPromptbar', JSON.stringify(!showPromptbar));
+    localSaveShowPromptBar(user, !showPromptbar);
   };
 
   const handleCreatePrompt = () => {
@@ -54,32 +58,31 @@ const Promptbar = () => {
         folderId: null,
       };
 
-      const updatedPrompts = [...prompts, newPrompt];
+      const updatedPrompts = storageCreatePrompt(
+        database,
+        user,
+        newPrompt,
+        prompts,
+      );
 
       homeDispatch({ field: 'prompts', value: updatedPrompts });
-
-      savePrompts(updatedPrompts);
     }
   };
 
   const handleDeletePrompt = (prompt: Prompt) => {
-    const updatedPrompts = prompts.filter((p) => p.id !== prompt.id);
-
+    const updatedPrompts = storageDeletePrompt(
+      database,
+      user,
+      prompt.id,
+      prompts,
+    );
     homeDispatch({ field: 'prompts', value: updatedPrompts });
-    savePrompts(updatedPrompts);
   };
 
   const handleUpdatePrompt = (prompt: Prompt) => {
-    const updatedPrompts = prompts.map((p) => {
-      if (p.id === prompt.id) {
-        return prompt;
-      }
+    const updated = storageUpdatePrompt(database, user, prompt, prompts);
 
-      return p;
-    });
-    homeDispatch({ field: 'prompts', value: updatedPrompts });
-
-    savePrompts(updatedPrompts);
+    homeDispatch({ field: 'prompts', value: updated.all });
   };
 
   const handleDrop = (e: any) => {
@@ -114,7 +117,7 @@ const Promptbar = () => {
     } else {
       promptDispatch({ field: 'filteredPrompts', value: prompts });
     }
-  }, [searchTerm, prompts]);
+  }, [searchTerm, prompts, promptDispatch]);
 
   return (
     <PromptbarContext.Provider

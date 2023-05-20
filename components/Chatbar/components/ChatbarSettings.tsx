@@ -1,7 +1,13 @@
-import { IconFileExport, IconSettings } from '@tabler/icons-react';
+import { IconFileExport, IconLogout, IconSettings } from '@tabler/icons-react';
+import { signOut } from 'next-auth/react';
 import { useContext, useState } from 'react';
 
 import { useTranslation } from 'next-i18next';
+
+import { localDeleteAPIKey } from '@/utils/app/storage/local/apiKey';
+import { localDeletePluginKeys } from '@/utils/app/storage/local/pluginKeys';
+import { deleteSelectedConversation } from '@/utils/app/storage/selectedConversation';
+import { AUTH_ENABLED } from '@chatbot-ui/core/utils/const';
 
 import HomeContext from '@/pages/api/home/home.context';
 
@@ -21,13 +27,24 @@ export const ChatbarSettings = () => {
   const {
     state: {
       apiKey,
-      lightMode,
+      database,
       serverSideApiKeyIsSet,
       serverSidePluginKeysSet,
       conversations,
+      user,
     },
     dispatch: homeDispatch,
   } = useContext(HomeContext);
+
+  const handleSignOut = () => {
+    if (database.name !== 'local') {
+      deleteSelectedConversation(user);
+      localDeleteAPIKey(user);
+      localDeletePluginKeys(user);
+    }
+
+    signOut();
+  };
 
   const {
     handleClearConversations,
@@ -47,7 +64,7 @@ export const ChatbarSettings = () => {
       <SidebarButton
         text={t('Export data')}
         icon={<IconFileExport size={18} />}
-        onClick={() => handleExportData()}
+        onClick={() => handleExportData(database)}
       />
 
       <SidebarButton
@@ -61,6 +78,14 @@ export const ChatbarSettings = () => {
       ) : null}
 
       {!serverSidePluginKeysSet ? <PluginKeys /> : null}
+
+      {AUTH_ENABLED && (
+        <SidebarButton
+          text={t('Log Out')}
+          icon={<IconLogout size={18} />}
+          onClick={handleSignOut}
+        />
+      )}
 
       <SettingDialog
         open={isSettingDialogOpen}

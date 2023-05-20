@@ -5,14 +5,28 @@ import { useTranslation } from 'next-i18next';
 import { useCreateReducer } from '@/hooks/useCreateReducer';
 
 import { DEFAULT_SYSTEM_PROMPT, DEFAULT_TEMPERATURE } from '@/utils/app/const';
-import { saveConversation, saveConversations } from '@/utils/app/conversation';
-import { saveFolders } from '@/utils/app/folders';
 import { exportData, importData } from '@/utils/app/importExport';
+import { storageDeleteConversation } from '@/utils/app/storage/conversation';
+import { storageDeleteConversations } from '@/utils/app/storage/conversations';
+import {
+  storageDeleteFolders,
+  storageUpdateFolders,
+} from '@/utils/app/storage/folders';
+import { localSaveAPIKey } from '@/utils/app/storage/local/apiKey';
+import {
+  localDeletePluginKeys,
+  localSavePluginKeys,
+} from '@/utils/app/storage/local/pluginKeys';
+import { localSaveShowChatBar } from '@/utils/app/storage/local/uiState';
+import {
+  deleteSelectedConversation,
+  saveSelectedConversation,
+} from '@/utils/app/storage/selectedConversation';
 
-import { Conversation } from '@/types/chat';
 import { LatestExportFormat, SupportedExportFormats } from '@/types/export';
 import { OpenAIModels } from '@/types/openai';
 import { PluginKey } from '@/types/plugin';
+import { Conversation } from '@chatbot-ui/core/types/chat';
 
 import HomeContext from '@/pages/api/home/home.context';
 
@@ -24,6 +38,7 @@ import Sidebar from '../Sidebar';
 import ChatbarContext from './Chatbar.context';
 import { ChatbarInitialState, initialState } from './Chatbar.state';
 
+import { Database } from '@chatbot-ui/core';
 import { v4 as uuidv4 } from 'uuid';
 
 export const Chatbar = () => {
@@ -34,7 +49,15 @@ export const Chatbar = () => {
   });
 
   const {
-    state: { conversations, showChatbar, defaultModelId, folders, pluginKeys },
+    state: {
+      conversations,
+      showChatbar,
+      defaultModelId,
+      database,
+      folders,
+      pluginKeys,
+      user,
+    },
     dispatch: homeDispatch,
     handleCreateFolder,
     handleNewConversation,
@@ -50,9 +73,9 @@ export const Chatbar = () => {
     (apiKey: string) => {
       homeDispatch({ field: 'apiKey', value: apiKey });
 
-      localStorage.setItem('apiKey', apiKey);
+      localSaveAPIKey(user, apiKey);
     },
-    [homeDispatch],
+    [homeDispatch, user],
   );
 
   const handlePluginKeyChange = (pluginKey: PluginKey) => {
@@ -67,14 +90,11 @@ export const Chatbar = () => {
 
       homeDispatch({ field: 'pluginKeys', value: updatedPluginKeys });
 
-      localStorage.setItem('pluginKeys', JSON.stringify(updatedPluginKeys));
+      localSavePluginKeys(user, updatedPluginKeys);
     } else {
       homeDispatch({ field: 'pluginKeys', value: [...pluginKeys, pluginKey] });
 
-      localStorage.setItem(
-        'pluginKeys',
-        JSON.stringify([...pluginKeys, pluginKey]),
-      );
+      localSavePluginKeys(user, [...pluginKeys, pluginKey]);
     }
   };
 
@@ -85,21 +105,24 @@ export const Chatbar = () => {
 
     if (updatedPluginKeys.length === 0) {
       homeDispatch({ field: 'pluginKeys', value: [] });
-      localStorage.removeItem('pluginKeys');
+      localDeletePluginKeys(user);
       return;
     }
 
     homeDispatch({ field: 'pluginKeys', value: updatedPluginKeys });
-
-    localStorage.setItem('pluginKeys', JSON.stringify(updatedPluginKeys));
+    localSavePluginKeys(user, updatedPluginKeys);
   };
 
-  const handleExportData = () => {
-    exportData();
+  const handleExportData = (database: Database) => {
+    exportData(database, user);
   };
 
-  const handleImportConversations = (data: SupportedExportFormats) => {
-    const { history, folders, prompts }: LatestExportFormat = importData(data);
+  const handleImportConversations = async (data: SupportedExportFormats) => {
+    const { history, folders, prompts }: LatestExportFormat = await importData(
+      database,
+      user,
+      data,
+    );
     homeDispatch({ field: 'conversations', value: history });
     homeDispatch({
       field: 'selectedConversation',
@@ -111,7 +134,7 @@ export const Chatbar = () => {
     window.location.reload();
   };
 
-  const handleClearConversations = () => {
+  const handleClearConversations = async () => {
     defaultModelId &&
       homeDispatch({
         field: 'selectedConversation',
@@ -128,23 +151,33 @@ export const Chatbar = () => {
 
     homeDispatch({ field: 'conversations', value: [] });
 
-    localStorage.removeItem('conversationHistory');
-    localStorage.removeItem('selectedConversation');
+    const deletedFolders = folders.filter((f) => f.type === 'chat');
+
+    let deletedFolderIds: string[] = [];
+    for (const folder of deletedFolders) {
+      deletedFolderIds.push(folder.id);
+    }
+
+    await storageDeleteConversations(database, user);
+    storageDeleteFolders(database, user, deletedFolderIds);
+    deleteSelectedConversation(user);
 
     const updatedFolders = folders.filter((f) => f.type !== 'chat');
 
     homeDispatch({ field: 'folders', value: updatedFolders });
-    saveFolders(updatedFolders);
+    storageUpdateFolders(database, user, updatedFolders);
   };
 
   const handleDeleteConversation = (conversation: Conversation) => {
-    const updatedConversations = conversations.filter(
-      (c) => c.id !== conversation.id,
+    const updatedConversations = storageDeleteConversation(
+      database,
+      user,
+      conversation.id,
+      conversations,
     );
 
     homeDispatch({ field: 'conversations', value: updatedConversations });
     chatDispatch({ field: 'searchTerm', value: '' });
-    saveConversations(updatedConversations);
 
     if (updatedConversations.length > 0) {
       homeDispatch({
@@ -152,7 +185,10 @@ export const Chatbar = () => {
         value: updatedConversations[updatedConversations.length - 1],
       });
 
-      saveConversation(updatedConversations[updatedConversations.length - 1]);
+      saveSelectedConversation(
+        user,
+        updatedConversations[updatedConversations.length - 1],
+      );
     } else {
       defaultModelId &&
         homeDispatch({
@@ -168,19 +204,19 @@ export const Chatbar = () => {
           },
         });
 
-      localStorage.removeItem('selectedConversation');
+      deleteSelectedConversation(user);
     }
   };
 
   const handleToggleChatbar = () => {
     homeDispatch({ field: 'showChatbar', value: !showChatbar });
-    localStorage.setItem('showChatbar', JSON.stringify(!showChatbar));
+    localSaveShowChatBar(user, showChatbar);
   };
 
   const handleDrop = (e: any) => {
     if (e.dataTransfer) {
       const conversation = JSON.parse(e.dataTransfer.getData('conversation'));
-      handleUpdateConversation(conversation, { key: 'folderId', value: 0 });
+      handleUpdateConversation(conversation, { key: 'folderId', value: null });
       chatDispatch({ field: 'searchTerm', value: '' });
       e.target.style.background = 'none';
     }
@@ -204,7 +240,7 @@ export const Chatbar = () => {
         value: conversations,
       });
     }
-  }, [searchTerm, conversations]);
+  }, [searchTerm, conversations, chatDispatch]);
 
   return (
     <ChatbarContext.Provider

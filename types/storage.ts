@@ -1,7 +1,8 @@
-import { Conversation } from './chat';
-import { FolderInterface } from './folder';
+import { Conversation } from '@chatbot-ui/core/types/chat';
+import { FolderInterface } from '@chatbot-ui/core/types/folder';
+import { Prompt } from '@chatbot-ui/core/types/prompt';
+
 import { PluginKey } from './plugin';
-import { Prompt } from './prompt';
 
 // keep track of local storage schema
 export interface LocalStorage {

@@ -18,9 +18,11 @@ import {
 
 import { useTranslation } from 'next-i18next';
 
-import { Message } from '@/types/chat';
+import { getTimestampWithTimezoneOffset } from '@chatbot-ui/core/utils/time';
+
 import { Plugin } from '@/types/plugin';
-import { Prompt } from '@/types/prompt';
+import { Conversation, Message } from '@chatbot-ui/core/types/chat';
+import { Prompt } from '@chatbot-ui/core/types/prompt';
 
 import HomeContext from '@/pages/api/home/home.context';
 
@@ -28,9 +30,15 @@ import { PluginSelect } from './PluginSelect';
 import { PromptList } from './PromptList';
 import { VariableModal } from './VariableModal';
 
+import { v4 as uuidv4 } from 'uuid';
+
 interface Props {
-  onSend: (message: Message, plugin: Plugin | null) => void;
-  onRegenerate: () => void;
+  onSend: (
+    conversation: Conversation | undefined,
+    message: Message,
+    plugin: Plugin | null,
+  ) => void;
+  onRegenerate: (conversation: Conversation | undefined) => void;
   onScrollDownClick: () => void;
   stopConversationRef: MutableRefObject<boolean>;
   textareaRef: MutableRefObject<HTMLTextAreaElement | null>;
@@ -97,13 +105,27 @@ export const ChatInput = ({
       return;
     }
 
-    onSend({ role: 'user', content }, plugin);
+    const messageId = uuidv4();
+    onSend(
+      selectedConversation,
+      {
+        id: messageId,
+        role: 'user',
+        content: content.trim(),
+        timestamp: getTimestampWithTimezoneOffset(),
+      },
+      plugin,
+    );
     setContent('');
     setPlugin(null);
 
     if (window.innerWidth < 640 && textareaRef && textareaRef.current) {
       textareaRef.current.blur();
     }
+  };
+
+  const handleRegenerate = () => {
+    onRegenerate(selectedConversation);
   };
 
   const handleStopConversation = () => {
@@ -237,7 +259,7 @@ export const ChatInput = ({
         textareaRef?.current?.scrollHeight > 400 ? 'auto' : 'hidden'
       }`;
     }
-  }, [content]);
+  }, [content, textareaRef]);
 
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
@@ -273,7 +295,7 @@ export const ChatInput = ({
           selectedConversation.messages.length > 0 && (
             <button
               className="absolute top-0 left-0 right-0 mx-auto mb-3 flex w-fit items-center gap-3 rounded border border-neutral-200 bg-white py-2 px-4 text-black hover:opacity-50 dark:border-neutral-600 dark:bg-[#343541] dark:text-white md:mb-0 md:mt-2"
-              onClick={onRegenerate}
+              onClick={handleRegenerate}
             >
               <IconRepeat size={16} /> {t('Regenerate response')}
             </button>

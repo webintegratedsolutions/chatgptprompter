@@ -28,6 +28,7 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # local env files
+.env
 .env*.local
 .env*
 
@@ -39,4 +40,7 @@ yarn-error.log*
 next-env.d.ts
 .idea
 pnpm-lock.yaml
+
+# ide
+.vscode/
 .env

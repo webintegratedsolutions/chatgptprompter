@@ -17,19 +17,56 @@ import {
 } from '@/utils/app/clean';
 import { DEFAULT_SYSTEM_PROMPT, DEFAULT_TEMPERATURE } from '@/utils/app/const';
 import {
-  saveConversation,
-  saveConversations,
-  updateConversation,
-} from '@/utils/app/conversation';
-import { saveFolders } from '@/utils/app/folders';
-import { savePrompts } from '@/utils/app/prompts';
-import { getSettings } from '@/utils/app/settings';
+  storageCreateConversation,
+  storageUpdateConversation,
+} from '@/utils/app/storage/conversation';
+import {
+  storageGetConversations,
+  storageUpdateConversations,
+} from '@/utils/app/storage/conversations';
+import {
+  storageCreateFolder,
+  storageDeleteFolder,
+  storageUpdateFolder,
+} from '@/utils/app/storage/folder';
+import { storageGetFolders } from '@/utils/app/storage/folders';
+import {
+  localDeleteAPIKey,
+  localGetAPIKey,
+} from '@/utils/app/storage/local/apiKey';
+import { localGetPluginKeys } from '@/utils/app/storage/local/pluginKeys';
+import {
+  localGetShowChatBar,
+  localGetShowPromptBar,
+} from '@/utils/app/storage/local/uiState';
+import {
+  storageDeleteMessages,
+  storageUpdateMessages,
+} from '@/utils/app/storage/messages';
+import {
+  storageGetPrompts,
+  storageUpdatePrompts,
+} from '@/utils/app/storage/prompts';
+import {
+  getSelectedConversation,
+  saveSelectedConversation,
+} from '@/utils/app/storage/selectedConversation';
+import { getSettings, saveSettings } from '@/utils/app/storage/settings';
+import {
+  storageCreateSystemPrompt,
+  storageDeleteSystemPrompt,
+  storageUpdateSystemPrompt,
+} from '@/utils/app/storage/systemPrompt';
+import { storageGetSystemPrompts } from '@/utils/app/storage/systemPrompts';
+import { getTimestampWithTimezoneOffset } from '@chatbot-ui/core/utils/time';
 
-import { Conversation } from '@/types/chat';
 import { KeyValuePair } from '@/types/data';
-import { FolderInterface, FolderType } from '@/types/folder';
 import { OpenAIModelID, OpenAIModels, fallbackModelID } from '@/types/openai';
-import { Prompt } from '@/types/prompt';
+import { Settings } from '@/types/settings';
+import { Conversation, Message } from '@chatbot-ui/core/types/chat';
+import { FolderType } from '@chatbot-ui/core/types/folder';
+import { Prompt } from '@chatbot-ui/core/types/prompt';
+import { SystemPrompt } from '@chatbot-ui/core/types/system-prompt';
 
 import { Chat } from '@/components/Chat/Chat';
 import { Chatbar } from '@/components/Chatbar/Chatbar';
@@ -64,12 +101,15 @@ const Home = ({
   const {
     state: {
       apiKey,
+      database,
       lightMode,
       folders,
       conversations,
       selectedConversation,
       prompts,
-      temperature,
+      systemPrompts,
+      defaultSystemPromptId,
+      user,
     },
     dispatch,
   } = contextValue;
@@ -107,28 +147,26 @@ const Home = ({
       value: conversation,
     });
 
-    saveConversation(conversation);
+    saveSelectedConversation(user, conversation);
   };
 
   // FOLDER OPERATIONS  --------------------------------------------
 
-  const handleCreateFolder = (name: string, type: FolderType) => {
-    const newFolder: FolderInterface = {
-      id: uuidv4(),
+  const handleCreateFolder = async (name: string, type: FolderType) => {
+    const updatedFolders = storageCreateFolder(
+      database,
+      user,
       name,
       type,
-    };
-
-    const updatedFolders = [...folders, newFolder];
+      folders,
+    );
 
     dispatch({ field: 'folders', value: updatedFolders });
-    saveFolders(updatedFolders);
   };
 
-  const handleDeleteFolder = (folderId: string) => {
+  const handleDeleteFolder = async (folderId: string) => {
     const updatedFolders = folders.filter((f) => f.id !== folderId);
     dispatch({ field: 'folders', value: updatedFolders });
-    saveFolders(updatedFolders);
 
     const updatedConversations: Conversation[] = conversations.map((c) => {
       if (c.folderId === folderId) {
@@ -142,7 +180,6 @@ const Home = ({
     });
 
     dispatch({ field: 'conversations', value: updatedConversations });
-    saveConversations(updatedConversations);
 
     const updatedPrompts: Prompt[] = prompts.map((p) => {
       if (p.folderId === folderId) {
@@ -156,34 +193,41 @@ const Home = ({
     });
 
     dispatch({ field: 'prompts', value: updatedPrompts });
-    savePrompts(updatedPrompts);
+
+    await storageUpdateConversations(database, user, updatedConversations);
+    await storageUpdatePrompts(database, user, updatedPrompts);
+    storageDeleteFolder(database, user, folderId, folders);
   };
 
-  const handleUpdateFolder = (folderId: string, name: string) => {
-    const updatedFolders = folders.map((f) => {
-      if (f.id === folderId) {
-        return {
-          ...f,
-          name,
-        };
-      }
-
-      return f;
-    });
+  const handleUpdateFolder = async (folderId: string, name: string) => {
+    const updatedFolders = storageUpdateFolder(
+      database,
+      user,
+      folderId,
+      name,
+      folders,
+    );
 
     dispatch({ field: 'folders', value: updatedFolders });
-
-    saveFolders(updatedFolders);
   };
 
   // CONVERSATION OPERATIONS  --------------------------------------------
 
-  const handleNewConversation = () => {
+  const handleNewConversation = async () => {
     const lastConversation = conversations[conversations.length - 1];
+
+    const defaultSystemPrompt = systemPrompts.find(
+      (p) => p.id === defaultSystemPromptId,
+    );
+
+    let systemPrompt = DEFAULT_SYSTEM_PROMPT;
+    if (defaultSystemPrompt) {
+      systemPrompt = defaultSystemPrompt.content;
+    }
 
     const newConversation: Conversation = {
       id: uuidv4(),
-      name: t('New Conversation'),
+      name: `${t('New Conversation')}`,
       messages: [],
       model: lastConversation?.model || {
         id: OpenAIModels[defaultModelId].id,
@@ -191,18 +235,22 @@ const Home = ({
         maxLength: OpenAIModels[defaultModelId].maxLength,
         tokenLimit: OpenAIModels[defaultModelId].tokenLimit,
       },
-      prompt: DEFAULT_SYSTEM_PROMPT,
-      temperature: lastConversation?.temperature ?? DEFAULT_TEMPERATURE,
+      prompt: systemPrompt,
+      temperature: DEFAULT_TEMPERATURE,
       folderId: null,
+      timestamp: getTimestampWithTimezoneOffset(),
     };
 
-    const updatedConversations = [...conversations, newConversation];
-
+    const updatedConversations = storageCreateConversation(
+      database,
+      user,
+      newConversation,
+      conversations,
+    );
     dispatch({ field: 'selectedConversation', value: newConversation });
     dispatch({ field: 'conversations', value: updatedConversations });
 
-    saveConversation(newConversation);
-    saveConversations(updatedConversations);
+    saveSelectedConversation(user, newConversation);
 
     dispatch({ field: 'loading', value: false });
   };
@@ -216,13 +264,107 @@ const Home = ({
       [data.key]: data.value,
     };
 
-    const { single, all } = updateConversation(
-      updatedConversation,
-      conversations,
+    let update: {
+      single: Conversation;
+      all: Conversation[];
+    };
+
+    if (data.key === 'messages') {
+      const messages = conversation.messages;
+      const updatedMessageList = data.value as Message[];
+
+      const deletedMessages = messages.filter(
+        (m) => !updatedMessageList.includes(m),
+      );
+
+      const updatedMessages = messages.filter((m) =>
+        updatedMessageList.includes(m),
+      );
+
+      const deletedMessageIds = deletedMessages.map((m) => m.id);
+
+      const cleaned = storageDeleteMessages(
+        database,
+        user,
+        deletedMessageIds,
+        conversation,
+        messages,
+        conversations,
+      );
+
+      const cleanConversation = cleaned.single;
+      const cleanConversations = cleaned.all;
+
+      update = storageUpdateMessages(
+        database,
+        user,
+        cleanConversation,
+        updatedMessages,
+        cleanConversations,
+      );
+    } else {
+      update = storageUpdateConversation(
+        database,
+        user,
+        updatedConversation,
+        conversations,
+      );
+    }
+
+    dispatch({ field: 'selectedConversation', value: update.single });
+    dispatch({ field: 'conversations', value: update.all });
+    saveSelectedConversation(user, update.single);
+  };
+
+  // SYSTEM PROMPT OPERATIONS  --------------------------------------------
+
+  const handleCreateSystemPrompt = async () => {
+    const newSystemPrompt: SystemPrompt = {
+      id: uuidv4(),
+      name: `${t('New System Prompt')}`,
+      content: DEFAULT_SYSTEM_PROMPT,
+    };
+
+    const updatedSystemPrompts = storageCreateSystemPrompt(
+      database,
+      user,
+      newSystemPrompt,
+      systemPrompts,
     );
 
-    dispatch({ field: 'selectedConversation', value: single });
-    dispatch({ field: 'conversations', value: all });
+    dispatch({ field: 'systemPrompts', value: updatedSystemPrompts });
+  };
+
+  const handleUpdateSystemPrompt = (updatedSystemPrompt: SystemPrompt) => {
+    let update: {
+      single: SystemPrompt;
+      all: SystemPrompt[];
+    };
+
+    update = storageUpdateSystemPrompt(
+      database,
+      user,
+      updatedSystemPrompt,
+      systemPrompts,
+    );
+
+    dispatch({ field: 'systemPrompts', value: update.all });
+  };
+
+  const handleDeleteSystemPrompt = (systemPromptId: string) => {
+    const updatedSystemPrompts = systemPrompts.filter(
+      (s) => s.id !== systemPromptId,
+    );
+
+    if (defaultSystemPromptId === systemPromptId) {
+      // Resetting default system prompt to built-in
+      const settings: Settings = getSettings(user);
+      saveSettings(user, { ...settings, defaultSystemPromptId: '0' });
+      dispatch({ field: 'defaultSystemPromptId', value: '0' });
+    }
+    dispatch({ field: 'systemPrompts', value: updatedSystemPrompts });
+
+    storageDeleteSystemPrompt(database, user, systemPromptId, systemPrompts);
   };
 
   // EFFECTS  --------------------------------------------
@@ -231,11 +373,12 @@ const Home = ({
     if (window.innerWidth < 640) {
       dispatch({ field: 'showChatbar', value: false });
     }
-  }, [selectedConversation]);
+  }, [dispatch, selectedConversation]);
 
   useEffect(() => {
     defaultModelId &&
       dispatch({ field: 'defaultModelId', value: defaultModelId });
+    database && dispatch({ field: 'database', value: database });
     serverSideApiKeyIsSet &&
       dispatch({
         field: 'serverSideApiKeyIsSet',
@@ -246,33 +389,46 @@ const Home = ({
         field: 'serverSidePluginKeysSet',
         value: serverSidePluginKeysSet,
       });
-  }, [defaultModelId, serverSideApiKeyIsSet, serverSidePluginKeysSet]);
+  }, [
+    defaultModelId,
+    database,
+    serverSideApiKeyIsSet,
+    serverSidePluginKeysSet,
+    dispatch,
+  ]);
 
   // ON LOAD --------------------------------------------
 
   useEffect(() => {
-    const settings = getSettings();
+    const settings = getSettings(user);
     if (settings.theme) {
       dispatch({
         field: 'lightMode',
         value: settings.theme,
       });
     }
+    if (settings.defaultSystemPromptId) {
+      dispatch({
+        field: 'defaultSystemPromptId',
+        value: settings.defaultSystemPromptId,
+      });
+    }
 
-    const apiKey = localStorage.getItem('apiKey');
+    const apiKey = localGetAPIKey(user);
 
     if (serverSideApiKeyIsSet) {
       dispatch({ field: 'apiKey', value: '' });
 
-      localStorage.removeItem('apiKey');
+      localDeleteAPIKey(user);
     } else if (apiKey) {
       dispatch({ field: 'apiKey', value: apiKey });
     }
 
-    const pluginKeys = localStorage.getItem('pluginKeys');
+    const pluginKeys = localGetPluginKeys(user);
+
     if (serverSidePluginKeysSet) {
       dispatch({ field: 'pluginKeys', value: [] });
-      localStorage.removeItem('pluginKeys');
+      localDeleteAPIKey(user);
     } else if (pluginKeys) {
       dispatch({ field: 'pluginKeys', value: pluginKeys });
     }
@@ -282,38 +438,46 @@ const Home = ({
       dispatch({ field: 'showPromptbar', value: false });
     }
 
-    const showChatbar = localStorage.getItem('showChatbar');
+    const showChatbar = localGetShowChatBar(user);
     if (showChatbar) {
-      dispatch({ field: 'showChatbar', value: showChatbar === 'true' });
+      dispatch({ field: 'showChatbar', value: showChatbar });
     }
 
-    const showPromptbar = localStorage.getItem('showPromptbar');
+    const showPromptbar = localGetShowPromptBar(user);
     if (showPromptbar) {
-      dispatch({ field: 'showPromptbar', value: showPromptbar === 'true' });
+      dispatch({ field: 'showPromptbar', value: showPromptbar });
     }
 
-    const folders = localStorage.getItem('folders');
-    if (folders) {
-      dispatch({ field: 'folders', value: JSON.parse(folders) });
-    }
+    storageGetFolders(database, user).then((folders) => {
+      if (folders) {
+        dispatch({ field: 'folders', value: folders });
+      }
+    });
 
-    const prompts = localStorage.getItem('prompts');
-    if (prompts) {
-      dispatch({ field: 'prompts', value: JSON.parse(prompts) });
-    }
+    storageGetPrompts(database, user).then((prompts) => {
+      if (prompts) {
+        dispatch({ field: 'prompts', value: prompts });
+      }
+    });
 
-    const conversationHistory = localStorage.getItem('conversationHistory');
-    if (conversationHistory) {
-      const parsedConversationHistory: Conversation[] =
-        JSON.parse(conversationHistory);
-      const cleanedConversationHistory = cleanConversationHistory(
-        parsedConversationHistory,
-      );
+    storageGetSystemPrompts(database, user).then((systemPrompts) => {
+      if (systemPrompts) {
+        dispatch({ field: 'systemPrompts', value: systemPrompts });
+      }
+    });
 
-      dispatch({ field: 'conversations', value: cleanedConversationHistory });
-    }
+    storageGetConversations(database, user).then((conversationHistory) => {
+      if (conversationHistory) {
+        const parsedConversationHistory: Conversation[] = conversationHistory;
+        const cleanedConversationHistory = cleanConversationHistory(
+          parsedConversationHistory,
+        );
 
-    const selectedConversation = localStorage.getItem('selectedConversation');
+        dispatch({ field: 'conversations', value: cleanedConversationHistory });
+      }
+    });
+
+    const selectedConversation = getSelectedConversation(user);
     if (selectedConversation) {
       const parsedSelectedConversation: Conversation =
         JSON.parse(selectedConversation);
@@ -326,22 +490,23 @@ const Home = ({
         value: cleanedSelectedConversation,
       });
     } else {
-      const lastConversation = conversations[conversations.length - 1];
       dispatch({
         field: 'selectedConversation',
         value: {
           id: uuidv4(),
-          name: t('New Conversation'),
+          name: 'New conversation',
           messages: [],
           model: OpenAIModels[defaultModelId],
           prompt: DEFAULT_SYSTEM_PROMPT,
-          temperature: lastConversation?.temperature ?? DEFAULT_TEMPERATURE,
+          temperature: DEFAULT_TEMPERATURE,
           folderId: null,
         },
       });
     }
   }, [
+    user,
     defaultModelId,
+    database,
     dispatch,
     serverSideApiKeyIsSet,
     serverSidePluginKeysSet,
@@ -357,6 +522,9 @@ const Home = ({
         handleUpdateFolder,
         handleSelectConversation,
         handleUpdateConversation,
+        handleCreateSystemPrompt,
+        handleUpdateSystemPrompt,
+        handleDeleteSystemPrompt,
       }}
     >
       <Head>
@@ -424,7 +592,6 @@ export const getServerSideProps: GetServerSideProps = async ({ locale }) => {
         'sidebar',
         'markdown',
         'promptbar',
-        'settings',
       ])),
     },
   };
