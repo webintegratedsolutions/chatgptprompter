@@ -17,6 +17,9 @@ export default withAuth({
       if (AUTH_ENABLED === false) {
         return true;
       }
+      if(!(token?.role?.name === 'admin' || token?.role?.name === 'subscriber')){
+        return false;
+      }
       if (!token?.email) {
         return false;
       } else {
