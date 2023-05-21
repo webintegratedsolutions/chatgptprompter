@@ -1,13 +1,16 @@
 # ---- Base Node ----
 FROM node:19-alpine AS base
+RUN apk add --no-cache python g++ make
 WORKDIR /app
+RUN apk --no-cache --virtual build-dependencies add \
+        python \
+        make \
+        g++
 COPY package*.json ./
 
 # ---- Dependencies ----
 FROM base AS dependencies
-#RUN apk --no-cache add python3
-# RUN apk add --update python make g++\
-#    && rm -rf /var/cache/apk/*
+
 RUN npm i
 
 # ---- Build ----
