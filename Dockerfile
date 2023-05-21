@@ -2,20 +2,18 @@
 FROM node:19-alpine AS base
 WORKDIR /app
 COPY package*.json ./
-COPY docker.env .env.local
 
 # ---- Dependencies ----
 FROM base AS dependencies
-RUN (npm ci || true)
+RUN npm ci
 
 # ---- Build ----
 FROM dependencies AS build
 COPY . .
-RUN (npm run build || true)
+RUN npm run build
 
 # ---- Production ----
 FROM node:19-alpine AS production
-RUN apk update && apk add --no-cache curl
 WORKDIR /app
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY --from=build /app/.next ./.next
