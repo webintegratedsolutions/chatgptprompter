@@ -40,6 +40,8 @@ export const authOptions: NextAuthOptions = {
       return token;
     },
     async session({ session, token }) {
+      console.log('env is');
+      console.log(process.env.NODE_ENV);
       const signingSecret = SUPABASE_JWT_SECRET;
       
       if (signingSecret) {
