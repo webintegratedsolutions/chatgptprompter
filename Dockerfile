@@ -3,7 +3,7 @@ FROM node:19-alpine AS base
 RUN apk add --no-cache python3 g++ make
 WORKDIR /app
 RUN apk --no-cache --virtual build-dependencies add \
-        python \
+        python3 \
         make \
         g++
 COPY package*.json ./
