@@ -5,8 +5,10 @@ COPY package*.json ./
 
 # ---- Dependencies ----
 FROM base AS dependencies
-RUN apk --no-cache add python3
-RUN npm ci
+#RUN apk --no-cache add python3
+# RUN apk add --update python make g++\
+#    && rm -rf /var/cache/apk/*
+RUN npm i
 
 # ---- Build ----
 FROM dependencies AS build
